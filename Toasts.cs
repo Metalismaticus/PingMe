@@ -1,4 +1,5 @@
-﻿﻿using Vintagestory.API.Client;
+﻿using Vintagestory.API.Client;
+using Vintagestory.API.Common;
 using System;
 using System.Collections.Generic;
 
@@ -7,6 +8,7 @@ namespace PingMe
     public class ToastManager
     {
         readonly ICoreClientAPI capi;
+        readonly PingmeConfig config;
         readonly Queue<(string title, string desc, string author, bool isChat)> queue = new();
         readonly List<ToastHud> active = new();
         const int MaxActive = 3;
@@ -15,7 +17,13 @@ namespace PingMe
         public const float PanelH = 96f;
         public const float MarginY = 20f;
 
-        public ToastManager(ICoreClientAPI capi) => this.capi = capi;
+        double lastSoundAtMs = -999999;
+
+        public ToastManager(ICoreClientAPI capi, PingmeConfig config)
+        {
+            this.capi = capi;
+            this.config = config;
+        }
 
         public void Enqueue(string title, string desc)
         {
@@ -51,7 +59,9 @@ namespace PingMe
                 }
 
                 float myY = MarginY;
-                var hud = new ToastHud(capi, title, desc, myY, author, isChat);
+                float stayMs = (config?.ToastStaySeconds > 0 ? config.ToastStaySeconds : 3.8f) * 1000f;
+
+                var hud = new ToastHud(capi, title, desc, myY, author, isChat, stayMs);
                 hud.ClosedCallback = () =>
                 {
                     active.Remove(hud);
@@ -61,17 +71,66 @@ namespace PingMe
 
                 active.Insert(0, hud);
                 hud.TryOpen();
+
+                if (config?.SoundEnabled == true) TryPlayNotifySound();
+            }
+        }
+
+        void TryPlayNotifySound()
+        {
+            double now = capi.InWorldEllapsedMilliseconds;
+            if (now - lastSoundAtMs < 150) return; // простая защита от лавины в один тик
+            lastSoundAtMs = now;
+
+            bool played =
+                PlayOnce(new AssetLocation("pingme", "sounds/ui/bells")) ||
+                PlayOnce(new AssetLocation("game",   "sounds/notify2"));
+
+            if (!played)
+                capi.Logger.Debug("[PingMe] Звук уведомления не проигран (asset не найден/не готов)");
+        }
+
+        bool PlayOnce(AssetLocation loc)
+        {
+            try
+            {
+                var s = capi.World.LoadSound(new SoundParams
+                {
+                    Location = loc,
+                    ShouldLoop = false,
+                    RelativePosition = true,
+                    Volume = 1f
+                });
+                if (s == null) return false;
+
+                s.PlaybackPosition = 0f;
+                s.Start();
+
+                int ms = (int)Math.Max(300, s.SoundLengthSeconds * 1000f + 150f);
+                capi.Event.RegisterCallback(dt =>
+                {
+                    try { if (!s.IsDisposed) { if (s.IsPlaying) s.Stop(); s.Dispose(); } }
+                    catch { /* no-op */ }
+                }, ms);
+
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
     }
 
     public class ToastHud : HudElement
     {
-        const float EnterMs = 250f, StayMs = 3800f, ExitMs = 300f;
+        const float EnterMs = 250f, ExitMs = 300f;
 
         const float MarginX = 20f;
         const float PanelW = 420f;
         const float PanelH = ToastManager.PanelH;
+
+        readonly float stayMs;
 
         double t0;
         ElementBounds root;
@@ -80,10 +139,12 @@ namespace PingMe
         float startY;
         public Action ClosedCallback;
 
-        public ToastHud(ICoreClientAPI capi, string title, string desc, float baseY, string author, bool isChat) : base(capi)
+        public ToastHud(ICoreClientAPI capi, string title, string desc, float baseY, string author, bool isChat, float stayMs)
+            : base(capi)
         {
             this.baseY = baseY;
             this.startY = baseY - 10f;
+            this.stayMs = stayMs <= 0 ? 3800f : stayMs;
 
             string uid = Guid.NewGuid().ToString("N");
 
@@ -94,7 +155,7 @@ namespace PingMe
             var titleFont  = CairoFont.WhiteSmallText(); titleFont.UnscaledFontsize  = 22;
             var descFont   = CairoFont.WhiteSmallText(); descFont.UnscaledFontsize   = 18;
             var authorFont = CairoFont.WhiteSmallText(); authorFont.UnscaledFontsize = 18;
-            authorFont.Color = new double[] { 1.0, 0.25, 0.25, 1.0 }; // красный
+            authorFont.Color = new double[] { 1.0, 0.25, 0.25, 1.0 };
 
             var tExt = titleFont.GetTextExtents(title ?? "");
             float tW = (float)tExt.Width;
@@ -139,95 +200,46 @@ namespace PingMe
             t0 = capi.InWorldEllapsedMilliseconds;
         }
 
-        // Строго максимум 2 строки по пиксельной ширине (без автопереноса на третью).
+        // Жёстко максимум 2 строки по пиксельной ширине, с "…"
         static string TwoLines(CairoFont font, string text, float maxWidth)
         {
             if (string.IsNullOrWhiteSpace(text)) return text;
 
-            // Убираем все переводы строк и схлопываем пробелы
             text = text.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ").Replace("\t", " ");
             while (text.Contains("  ")) text = text.Replace("  ", " ");
 
+            string[] words = text.Split(' ');
             string line1 = "", line2 = "";
-            float w1 = 0, w2 = 0;
 
-            var words = text.Split(' ');
-            int i = 0;
-
-            // локальная функция: добавить кусок в линию, если не влазит — вернуть false
-            bool TryAppend(ref string line, ref float w, string chunk)
+            foreach (var w in words)
             {
-                string candidate = string.IsNullOrEmpty(line) ? chunk : (line + " " + chunk);
-                double width = font.GetTextExtents(candidate).Width;
-                if (width <= maxWidth) { line = candidate; w = (float)width; return true; }
-                return false;
-            }
-
-            // локальная функция: разрубить слишком длинное слово под maxWidth (с учётом уже имеющегося line)
-            string FitChunk(CairoFont f, string prefix, string word, float maxW)
-            {
-                // если слово полностью влазит — возвращаем его
-                string test = string.IsNullOrEmpty(prefix) ? word : (prefix + " " + word);
-                if (f.GetTextExtents(test).Width <= maxW) return word;
-
-                // режем по символам
-                string acc = "";
-                for (int k = 0; k < word.Length; k++)
+                string candidate = string.IsNullOrEmpty(line1) ? w : (line1 + " " + w);
+                if (font.GetTextExtents(candidate).Width <= maxWidth)
                 {
-                    string cand = string.IsNullOrEmpty(prefix) ? (acc + word[k]) : (prefix + " " + acc + word[k]);
-                    if (f.GetTextExtents(cand).Width <= maxW) acc += word[k];
-                    else break;
+                    line1 = candidate;
                 }
-                return acc; // может быть пустым, тогда наверх добавим «…»
-            }
-
-            // Сборка первой строки
-            for (; i < words.Length; i++)
-            {
-                string w = words[i];
-                if (string.IsNullOrEmpty(w)) continue;
-
-                if (!TryAppend(ref line1, ref w1, w))
+                else
                 {
-                    // слово не лезет — попробуем часть слова
-                    string part = FitChunk(font, line1, w, maxWidth);
-                    if (!string.IsNullOrEmpty(part))
+                    // слово не влезло в первую строку → идёт во вторую
+                    candidate = string.IsNullOrEmpty(line2) ? w : (line2 + " " + w);
+                    if (font.GetTextExtents(candidate).Width <= maxWidth)
                     {
-                        TryAppend(ref line1, ref w1, part);
-                        // остаток слова идёт дальше как следующий элемент
-                        string rest = w.Substring(part.Length);
-                        if (!string.IsNullOrEmpty(rest)) words[i] = rest; else continue;
+                        line2 = candidate;
                     }
-                    break;
+                    else
+                    {
+                        // не влезло даже во вторую → обрезаем и ставим …
+                        string cut = w;
+                        while (cut.Length > 0 && font.GetTextExtents(line2 + " " + cut + "…").Width > maxWidth)
+                        {
+                            cut = cut.Substring(0, cut.Length - 1);
+                        }
+                        line2 = (string.IsNullOrEmpty(line2) ? cut : (line2 + " " + cut)) + "…";
+                        break;
+                    }
                 }
             }
 
-            // Сборка второй строки
-            for (; i < words.Length; i++)
-            {
-                string w = words[i];
-                if (string.IsNullOrEmpty(w)) continue;
-
-                if (!TryAppend(ref line2, ref w2, w))
-                {
-                    string part = FitChunk(font, line2, w, maxWidth);
-                    if (!string.IsNullOrEmpty(part))
-                    {
-                        TryAppend(ref line2, ref w2, part);
-                    }
-                    // есть ещё текст — ставим многоточие (гарантируем влезание)
-                    string ell = line2 + "…";
-                    while (ell.Length > 1 && font.GetTextExtents(ell).Width > maxWidth)
-                    {
-                        line2 = line2.Substring(0, line2.Length - 1);
-                        ell = line2 + "…";
-                    }
-                    line2 = ell;
-                    return string.IsNullOrEmpty(line2) ? (string.IsNullOrEmpty(line1) ? "" : line1) : (line1 + "\n" + line2);
-                }
-            }
-
-            // Влезло в две строки без обрезки
             return string.IsNullOrEmpty(line2) ? line1 : (line1 + "\n" + line2);
         }
 
@@ -246,16 +258,16 @@ namespace PingMe
                 return;
             }
 
-            if (t <= EnterMs + StayMs)
+            if (t <= EnterMs + stayMs)
             {
                 root.fixedY = baseY;
                 root.CalcWorldBounds();
                 return;
             }
 
-            if (t <= EnterMs + StayMs + ExitMs)
+            if (t <= EnterMs + stayMs + ExitMs)
             {
-                float k = (float)((t - EnterMs - StayMs) / ExitMs);
+                float k = (float)((t - EnterMs - stayMs) / ExitMs);
                 root.fixedX = MarginX - 500f * k;
                 root.CalcWorldBounds();
                 return;

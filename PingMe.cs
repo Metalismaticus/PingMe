@@ -2,6 +2,7 @@
 using Vintagestory.API.Common;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -11,6 +12,11 @@ namespace PingMe
     {
         public HashSet<string> Nicknames { get; set; } =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Options
+        public bool SoundEnabled { get; set; } = true;
+        public bool SystemNotifications { get; set; } = true;   // show system chats
+        public float ToastStaySeconds { get; set; } = 3.8f;     // toast duration
     }
 
     public class PingmeService
@@ -36,7 +42,7 @@ namespace PingMe
             var parts = message.Split(new[] { ' ' }, 3, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 1)
             {
-                capi.ShowChatMessage("[pingme] Команды: .pingme add <ник>, .pingme show, .pingme delete <ник>");
+                capi.ShowChatMessage("[pingme] Commands: .pingme add <nick>, .pingme show, .pingme delete <nick>, .pingme sound, .pingme system, .pingme time <seconds>");
                 return;
             }
 
@@ -44,21 +50,21 @@ namespace PingMe
             switch (cmd)
             {
                 case "add":
-                    if (parts.Length < 3) { capi.ShowChatMessage("[pingme] Укажи ник: .pingme add <ник>"); return; }
+                    if (parts.Length < 3) { capi.ShowChatMessage("[pingme] Provide a nick: .pingme add <nick>"); return; }
                     var toAdd = parts[2].Trim();
-                    if (toAdd.Length == 0) { capi.ShowChatMessage("[pingme] Ник пуст."); return; }
+                    if (toAdd.Length == 0) { capi.ShowChatMessage("[pingme] Nick is empty."); return; }
                     if (config.Nicknames.Add(toAdd))
                     {
                         capi.StoreModConfig(config, "pingme.json");
-                        capi.ShowChatMessage($"[pingme] Добавлено: {toAdd}");
+                        capi.ShowChatMessage($"[pingme] Added: {toAdd}");
                     }
-                    else capi.ShowChatMessage($"[pingme] Уже есть: {toAdd}");
+                    else capi.ShowChatMessage($"[pingme] Already added: {toAdd}");
                     break;
 
                 case "show":
                     capi.ShowChatMessage(
                         config.Nicknames.Count == 0
-                        ? "[pingme] Список пуст."
+                        ? "[pingme] List is empty."
                         : "[pingme] " + string.Join(", ", config.Nicknames.OrderBy(s => s))
                     );
                     break;
@@ -66,18 +72,50 @@ namespace PingMe
                 case "delete":
                 case "del":
                 case "remove":
-                    if (parts.Length < 3) { capi.ShowChatMessage("[pingme] Укажи ник: .pingme delete <ник>"); return; }
+                    if (parts.Length < 3) { capi.ShowChatMessage("[pingme] Provide a nick: .pingme delete <nick>"); return; }
                     var toDel = parts[2].Trim();
                     if (config.Nicknames.Remove(toDel))
                     {
                         capi.StoreModConfig(config, "pingme.json");
-                        capi.ShowChatMessage($"[pingme] Удалено: {toDel}");
+                        capi.ShowChatMessage($"[pingme] Deleted: {toDel}");
                     }
-                    else capi.ShowChatMessage($"[pingme] Не найдено: {toDel}");
+                    else capi.ShowChatMessage($"[pingme] Not found: {toDel}");
+                    break;
+
+                case "sound":
+                    config.SoundEnabled = !config.SoundEnabled;
+                    capi.StoreModConfig(config, "pingme.json");
+                    capi.ShowChatMessage($"[pingme] Sound: {(config.SoundEnabled ? "on" : "off")}");
+                    break;
+
+                case "system":
+                    config.SystemNotifications = !config.SystemNotifications;
+                    capi.StoreModConfig(config, "pingme.json");
+                    capi.ShowChatMessage($"[pingme] System notifications: {(config.SystemNotifications ? "on (all)" : "off")}");
+                    break;
+
+                case "time":
+                    if (parts.Length < 3)
+                    {
+                        capi.ShowChatMessage($"[pingme] Now: {config.ToastStaySeconds:0.##} sec. Example: .pingme time 5");
+                        return;
+                    }
+                    var raw = parts[2].Trim().Replace(',', '.');
+                    if (float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out float secs))
+                    {
+                        secs = Math.Max(0.5f, Math.Min(30f, secs));
+                        config.ToastStaySeconds = secs;
+                        capi.StoreModConfig(config, "pingme.json");
+                        capi.ShowChatMessage($"[pingme] Show time: {secs:0.##} sec");
+                    }
+                    else
+                    {
+                        capi.ShowChatMessage("[pingme] I didn't understand the number. Example: .pingme time 4.5");
+                    }
                     break;
 
                 default:
-                    capi.ShowChatMessage("[pingme] Неизвестная команда. Используй: add | show | delete");
+                    capi.ShowChatMessage("[pingme] Unknown command. Use: add | show | delete | sound | system | time");
                     break;
             }
         }
@@ -86,39 +124,37 @@ namespace PingMe
         {
             if (string.IsNullOrEmpty(message)) return;
 
-            // 1) Удаляем теги
+            // 1) Strip tags
             string clean = StripTags(message);
 
-            // 2) Склеиваем переносы/табы, схлопываем лишние пробелы
+            // 2) Collapse line breaks/tabs and extra spaces
             clean = OneLine(clean);
 
-            // 3) Ограничиваем длину, чтобы не распирало тост (TwoLines в Toasts даст ровно 2 строки)
+            // 3) Limit length
             clean = Trunc100(clean);
 
-            // Системные: фильтруем смерти, остальное показываем
+            // System chat
             if (chattype == EnumChatType.Notification)
             {
-                if (DeathMessageFilter.IsDeathMessage(clean)) return;
-
-                var title = GroupTitle(groupId, chattype);
+                if (!config.SystemNotifications) return; // completely disabled; don't filter deaths anymore
+                var title = GroupTitle(groupId);
                 toasts.Enqueue(title, clean);
                 return;
             }
 
-            // Обычный чат: фильтр по прозвищам
+            // Regular chat: nickname filter
             if (!ContainsAnyNicknameWordBounded(clean)) return;
 
             ParseAuthorAndBody(clean, out string author, out string body);
 
-            // Игнорируем свои
+            // Ignore own messages
             var myName = capi?.World?.Player?.PlayerName;
             if (!string.IsNullOrEmpty(author) && !string.IsNullOrEmpty(myName) &&
                 author.Equals(myName, StringComparison.OrdinalIgnoreCase)) return;
 
-            // Автор в первую строку (в Toasts это отдельная строка), тело — во вторую
             if (!string.IsNullOrEmpty(author)) author += ":";
 
-            var chatTitle = GroupTitle(groupId, chattype);
+            var chatTitle = GroupTitle(groupId);
             toasts.EnqueueChat(chatTitle, author, Trunc100(OneLine(body)));
         }
 
@@ -176,66 +212,27 @@ namespace PingMe
             if (m2.Success) { author = m2.Groups[1].Value.Trim(); body = m2.Groups[2].Value; }
         }
 
-        string GroupTitle(int groupId, EnumChatType chatType)
+        string GroupTitle(int groupId)
         {
             try
             {
                 var player = capi?.World?.Player;
                 if (player != null)
                 {
-                    // 1) Прямой поиск по членству
                     var membership = player.GetGroup(groupId);
-                    var name = GetGroupNameReflect(membership);
-                    if (!string.IsNullOrWhiteSpace(name))
-                        return name;
-
-                    // 2) Перебор всех групп игрока без жёсткого доступа к GroupId
-                    var groups = player.Groups;
-                    if (groups != null)
+                    if (membership != null && !string.IsNullOrWhiteSpace(membership.GroupName))
                     {
-                        foreach (var g in groups)
-                        {
-                            int? gid = GetGroupIdReflect(g);
-                            if (gid.HasValue && gid.Value == groupId)
-                            {
-                                name = GetGroupNameReflect(g);
-                                if (!string.IsNullOrWhiteSpace(name))
-                                    return name;
-                            }
-                        }
+                        return membership.GroupName;
                     }
                 }
             }
             catch (Exception ex)
             {
-                capi.Logger.Error($"[PingMe] Ошибка при получении названия группы {groupId}: {ex}");
+                capi.Logger.Error($"[PingMe] Error while getting group title {groupId}: {ex}");
             }
 
-            // Фолбэк
-            if (chatType == EnumChatType.Notification) return "System";
             if (groupId == 0) return "General chat";
             return $"Group {groupId}";
-        }
-
-        static string GetGroupNameReflect(object membership)
-        {
-            if (membership == null) return null;
-            var t = membership.GetType();
-            var p = t.GetProperty("GroupName") ?? t.GetProperty("Name") ?? t.GetProperty("Title");
-            return p?.GetValue(membership)?.ToString();
-        }
-
-        static int? GetGroupIdReflect(object membership)
-        {
-            if (membership == null) return null;
-            var t = membership.GetType();
-            var p = t.GetProperty("GroupId") ?? t.GetProperty("Id") ?? t.GetProperty("GroupID");
-            if (p == null) return null;
-            var val = p.GetValue(membership);
-            if (val is int i) return i;
-            if (val is long l) return (int)l;
-            if (val != null && int.TryParse(val.ToString(), out var j)) return j;
-            return null;
         }
     }
 }

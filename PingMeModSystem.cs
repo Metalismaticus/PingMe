@@ -1,9 +1,9 @@
-﻿using Vintagestory.API.Common;
-using Vintagestory.API.Client;
+﻿using Vintagestory.API.Client;
+using Vintagestory.API.Common;
 
 namespace PingMe
 {
-    public class Project1ModSystem : ModSystem
+    public class PingMeModSystem : ModSystem
     {
         ICoreClientAPI capi;
         ToastManager toastManager;
@@ -15,7 +15,7 @@ namespace PingMe
             capi = api;
 
             config = capi.LoadModConfig<PingmeConfig>("pingme.json") ?? new PingmeConfig();
-            toastManager = new ToastManager(capi);
+            toastManager = new ToastManager(capi, config);
             pingme = new PingmeService(capi, toastManager, config);
 
             capi.Event.ChatMessage += pingme.OnChatMessage;
