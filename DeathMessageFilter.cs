@@ -1,0 +1,127 @@
+﻿using System;
+using System.Linq;
+
+namespace PingMe
+{
+    public static class DeathMessageFilter
+    {
+        private static readonly string[] DeathMessagesEn =
+        {
+            "Player {0} forgot to eat.",
+            "Player {0} thought food was optional.",
+            "Player {0} starved to death.",
+            "Player {0} went up in flames.",
+            "Player {0} roasted themselves.",
+            "Player {0} got killed by fire.",
+            "Player {0} got electrocuted.",
+            "Player {0} got the shock of their life.",
+            "Player {0} died, shockingly.",
+            "Player {0} died.",
+            "Player {0} lit up like a light bulb.",
+            "Player {0} forgot the need to breathe.",
+            "Player {0} was all out of air.",
+            "Player {0} got pancaked.",
+            "Player {0} got a bit close to the edge.",
+            "Player {0} thought we could fly.",
+            "Player {0} fell to their death.",
+            "Player {0} hugged a bomb.",
+            "Player {0} got blown up.",
+            "Player {0} panicked after igniting a bomb.",
+            "Player {0} got killed by an explosion.",
+            "Player {0} was wolf bait.",
+            "Player {0} got bitten to death.",
+            "Player {0} had a too close encounter with a wolf.",
+            "Player {0} got killed by a wolf.",
+            "Player {0} messed around with a boar.",
+            "Player {0} unwisely poked a bear.",
+            "Player {0} was torn limb from limb.",
+            "Player {0} suffered a grizzly death.",
+            "Player {0} made a fine polar meal.",
+            "Player {0} was mistaken for a seal.",
+            "Player {0} found out that polar bears are dangerous.",
+            "Player {0} succumbed to a drifter.",
+            "Player {0} tried to hug a drifter.",
+            "Player {0} got driftered.",
+            "Player {0} got crushed by an immobilized eidolon.",
+            "Player {0} got rammed to death",
+            "Player {0} got horned to death",
+            "Player {0} got trampled by a bighorn sheep",
+            "Player {0} has locusts all over their dead body.",
+            "Player {0} got killed by a Locust.",
+            "Player {0} has corrupt locusts all over their dead body.",
+            "Player {0} got killed by a corrupt Locust.",
+            "Player {0} got sawed into pieces by a sawblade locust.",
+            "Player {0} lost a few limbs to a sawblade locust.",
+            "Player {0} was killed by the GOAT goat.",
+            "Player {0}'s life was taken by a takin.",
+            "Player {0} was killed by a baaaad goat.",
+            "A moose on the loose killed Player {0}.",
+            "Player {0} was killed by an elk.",
+            "Oh dear, player {0} was killed by a deer."
+        };
+
+        private static readonly string[] DeathMessagesRu =
+        {
+            "Игрок {0} забыл поесть.",
+            "Игрок {0} думал, что есть необязательно.",
+            "Игрок {0} оголодал до смерти.",
+            "Игрок {0} вознесся с языками пламени.",
+            "Игрок {0} поджарился.",
+            "Игрок {0} погиб в огне.",
+            "Игрок {0} поражён электрическим током.",
+            "Игрок {0} испытал настоящий шок.",
+            "Игрок {0} неожиданно умер.",
+            "Игрок {0} загорелся, как лампочка.",
+            "Игрок {0} забыл о необходимости дышать.",
+            "Игрок {0} задохнулся.",
+            "Игрок {0} расплющился в блин.",
+            "Игрок {0} подобрался слишком близко к краю.",
+            "Игрок {0} поверил, что может летать.",
+            "Игрок {0} разбился насмерть.",
+            "Игрок {0} обнял бомбу.",
+            "Игрок {0} подорвался.",
+            "Игрок {0} запаниковал после поджигания бомбы.",
+            "Игрок {0} был убит взрывом.",
+            "Игрок {0} стал волчьей приманкой.",
+            "Игрока {0} закусали до смерти.",
+            "Игрок {0} подошел к волку слишком близко.",
+            "Игрока {0} убил волк.",
+            "Игрок {0} стал кормом для волков.",
+            "Игрок {0} не пережил встречи с волчицей.",
+            "Игрока {0} убила волчица.",
+            "Игрок {0} доигрался с кабаном.",
+            "Игрок {0} дошутился с кабанихой.",
+            "Игрок {0} неосмотрительно ткнул медведя.",
+            "Игрок {0} был разорван на части.",
+            "Игроку {0} оказали медвежью услугу.",
+            "Игрок {0} стал отличным полярным ужином.",
+            "Игрока {0} приняли за нерпу.",
+            "Игрок {0} узнал, что белые медведи опасны.",
+            "Игрок {0} сдался дрифтеру.",
+            "Игрок {0} попытался обнять дрифтера.",
+            "Игрока {0} отдрифтили.",
+            "Игрок {0} был раздавлен обездвиженным эйдолоном.",
+            "Игрока {0} затоптали насмерть",
+            "Игрока {0} забодали насмерть",
+            "Игрока {0} затоптал толсторог",
+            "Мертвое тело игрока {0} скрылось под слоем саранчи.",
+            "Игрок {0} был убит cаранчой.",
+            "Мертвое тело игрока {0} скрылось под слоем искаженной саранчи.",
+            "Игрок {0} был убит искаженной cаранчой.",
+            "Игрок {0} был распилен саранчой на куски.",
+            "Игрок {0} потерял несколько конечностей благодаря распиливающей саранче.",
+            "Толсторог GOAT убил игрока {0}.",
+            "Убил-таки такин игрока {0}.",
+            "Игрок {0} был убит бе-е-е-ссовестным козлом.",
+            "Небось лось убил игрока {0}.",
+            "Игрок {0} был убит вапити.",
+            "О, Боже, игрок {0} был убит оленем."
+        };
+
+        public static bool IsDeathMessage(string message)
+        {
+            return DeathMessagesEn.Any(m => string.Equals(m, message, StringComparison.OrdinalIgnoreCase))
+                || DeathMessagesRu.Any(m => string.Equals(m, message, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+}
